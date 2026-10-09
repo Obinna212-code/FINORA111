@@ -73,17 +73,28 @@ exports.handler = async (event) => {
     }
 
     if (!account) {
+      let webhookDiagnostic = null;
+      try {
+        const { getStore } = require('@netlify/blobs');
+        webhookDiagnostic = await getStore('finora-mono-connections').get('diagnostics:last-event', { type: 'json' });
+      } catch (storageError) {
+        console.error('Mono webhook diagnostics read failed:', storageError?.message || String(storageError));
+      }
       console.error('Mono account lookup did not match FINORA ref:', {
         account_count: accounts.length,
         response_keys: Object.keys(list || {}),
-        data_type: Array.isArray(list?.data) ? 'array' : typeof list?.data
+        data_type: Array.isArray(list?.data) ? 'array' : typeof list?.data,
+        last_webhook_event: webhookDiagnostic?.event || null,
+        webhook_has_ref: webhookDiagnostic?.hasRef ?? null,
+        webhook_has_account_id: webhookDiagnostic?.hasAccountId ?? null
       });
       return json(404, {
         message: accounts.length
-          ? 'Mono returned linked accounts, but none matched this FINORA connection. Check that the Mono webhook is configured and has delivered the account_connected event.'
-          : 'Mono returned no linked accounts and no saved webhook record for this connection. Check that Mono is sending account_connected events to FINORA, then reconnect once.',
+          ? 'Mono returned linked accounts, but none matched this FINORA connection. Check the webhook event and reference.'
+          : 'FINORA cannot find a saved Mono account for this connection.',
         accounts_found: accounts.length,
-        webhook_record_found: false
+        webhook_record_found: false,
+        webhook_diagnostic: webhookDiagnostic || { status: 'No authenticated Mono webhook has been saved yet. Check the webhook URL and secret in the Mono dashboard.' }
       });
     }
 
