@@ -1,0 +1,13 @@
+{
+  "name":"FINORA — by Kalu Obinna",
+  "short_name":"FINORA",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#0F172A",
+  "theme_color":"#0F172A",
+  "description":"Know your money. Grow your future.",
+  "icons":[
+    {"src":"/finora-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/finora-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
