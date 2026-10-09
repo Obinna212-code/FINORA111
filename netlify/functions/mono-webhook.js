@@ -1,40 +1,39 @@
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Method not allowed' }) };
-  }
+  const json = (statusCode, payload) => ({
+    statusCode,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    body: JSON.stringify(payload)
+  });
+  if (event.httpMethod !== 'POST') return json(405, { message: 'Method not allowed' });
 
-  // Support the name used by FINORA and Mono's documentation.
   const expected = process.env.MONO_WEBHOOK_SECRET || process.env.MONO_WEBHOOK_SEC;
-  const supplied = event.headers?.['mono-webhook-secret'] || event.headers?.['Mono-Webhook-Secret'];
-  if (!expected || !supplied || supplied !== expected) {
-    return { statusCode: 401, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Unauthorized request.' }) };
-  }
+  const headers = event.headers || {};
+  const supplied = headers['mono-webhook-secret'] || headers['Mono-Webhook-Secret'];
+  if (!expected || !supplied || supplied !== expected) return json(401, { message: 'Unauthorized request.' });
 
-  let payload = {};
-  try { payload = JSON.parse(event.body || '{}'); } catch (_) {
-    return { statusCode: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Invalid JSON.' }) };
-  }
+  let payload;
+  try { payload = JSON.parse(event.body || '{}'); } catch (_) { return json(400, { message: 'Invalid JSON.' }); }
 
   const eventName = payload.event || 'unknown';
   const eventId = payload.event_id || null;
   const data = payload.data || {};
+  const account = data.account || data.data?.account || {};
+  const accountId = data.id || data._id || account.id || account._id || data.account_id || null;
+  const ref = data.meta?.ref || account.meta?.ref || data.ref || null;
+  const dataStatus = data.meta?.data_status || account.meta?.data_status || null;
 
-  // Netlify functions are stateless. The durable account/user association must
-  // eventually be stored in FINORA's database. For now, acknowledge valid
-  // Mono events so Mono does not retry them, and expose only safe metadata in
-  // the function log (never secrets or full account payloads).
-  console.log(JSON.stringify({
-    source: 'mono',
-    event: eventName,
-    event_id: eventId,
-    account_id: data.id || data.account?._id || null,
-    ref: data.meta?.ref || data.account?.meta?.ref || null,
-    data_status: data.meta?.data_status || data.account?.meta?.data_status || null
-  }));
+  console.log(JSON.stringify({ source: 'mono', event: eventName, event_id: eventId, account_id: accountId, ref, data_status: dataStatus, has_account_id: Boolean(accountId), has_ref: Boolean(ref) }));
 
-  return {
-    statusCode: 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ received: true, event: eventName, event_id: eventId })
-  };
+  if (accountId && ref) {
+    try {
+      const { getStore } = require('@netlify/blobs');
+      const store = getStore('finora-mono-connections');
+      await store.setJSON('ref:' + ref, { accountId: String(accountId), ref: String(ref), event: eventName, eventId, dataStatus, updatedAt: new Date().toISOString() });
+    } catch (error) {
+      console.error('Mono webhook persistence failed:', error?.message || String(error));
+      return json(500, { message: 'Unable to save Mono connection event; retry delivery.' });
+    }
+  }
+
+  return json(200, { received: true, event: eventName, event_id: eventId, saved: Boolean(accountId && ref) });
 };
