@@ -16,38 +16,35 @@ exports.handler = async (event) => {
   const headers = { accept: 'application/json', 'mono-sec-key': secret };
 
   try {
-    const listResp = await fetch('https://api.withmono.com/v2/accounts', { headers });
-    const list = await listResp.json().catch(() => ({}));
-
-    if (!listResp.ok) {
-      console.error('Mono accounts list failed:', listResp.status, list?.message || 'No message');
-      return json(502, {
-        message: 'Mono could not list linked accounts. Check that MONO_SECRET_KEY belongs to the same Mono Connect app/environment used to link the bank.',
-        mono_status: listResp.status,
-        mono_message: list?.message || null
-      });
+    // Prefer the account ID captured from Mono's authenticated webhook.
+    // Netlify Blobs keeps this association available between function calls.
+    let account = null;
+    let savedAccountId = null;
+    try {
+      const { getStore } = require('@netlify/blobs');
+      const saved = await getStore('finora-mono-connections').get('ref:' + ref, { type: 'json' });
+      if (saved?.accountId) savedAccountId = String(saved.accountId);
+    } catch (storageError) {
+      console.error('Mono connection store read failed:', storageError?.message || String(storageError));
     }
 
-    // Mono's response may expose the collection in different wrappers.
-    const possibleLists = [
-      list?.data,
-      list?.data?.accounts,
-      list?.data?.data,
-      list?.data?.results,
-      list?.accounts,
-      list?.results
-    ];
-    const accounts = possibleLists.find(Array.isArray) || [];
+    if (savedAccountId) {
+      const savedDetailResp = await fetch('https://api.withmono.com/v2/accounts/' + encodeURIComponent(savedAccountId), { headers });
+      const savedDetail = await savedDetailResp.json().catch(() => ({}));
+      if (savedDetailResp.ok) {
+        account = { ...(savedDetail?.data?.account || savedDetail?.data || {}), id: savedAccountId, meta: savedDetail?.data?.meta || savedDetail?.data?.account?.meta || {} };
+      } else {
+        console.error('Saved Mono account lookup failed:', savedDetailResp.status, savedDetail?.message || 'No message');
+      }
+    }
 
-    // Only use an account whose Mono reference matches this FINORA connection.
-    // Do not silently select the newest account: that can attach the wrong bank account.
-    let account = accounts.find(a =>
-      a?.meta?.ref === ref ||
-      a?.account?.meta?.ref === ref ||
-      a?.data?.meta?.ref === ref
-    );
-
+    let list = {};
+    let accounts = [];
     if (!account) {
+      const listResp = await fetch('https://api.withmono.com/v2/accounts', { headers });
+      list = await listResp.json().catch(() => ({}));
+
+      if (!account) {
       for (const candidate of accounts.slice().reverse().slice(0, 15)) {
         const id = candidate?.id || candidate?._id || candidate?.account?.id || candidate?.account?._id;
         if (!id) continue;
