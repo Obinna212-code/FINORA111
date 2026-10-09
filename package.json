@@ -1,0 +1,9 @@
+{
+  "name": "finora",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FINORA finance app Netlify functions",
+  "dependencies": {
+    "@netlify/blobs": "^10.5.0"
+  }
+}
